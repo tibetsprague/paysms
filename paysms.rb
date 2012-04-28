@@ -106,7 +106,7 @@ class PaySMS < Sinatra::Base
       $redis.setex("phone:auth:#{@code}", 1.day.from_now.to_i, @phone)
 
       if msg.present?
-        text = "#{msg} http://pays.ms/a/#{@code}"
+        text = "#{msg} " + url_for("/a/#{@code}")
       elsif $redis.get("phone:number:#{phone}")
         text = "Follow this link to log in to PayS.MS " + url_for("/a/#{@code}")
       else
