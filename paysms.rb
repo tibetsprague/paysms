@@ -19,45 +19,45 @@ class PaySMS < Sinatra::Base
     else
       $redis = Redis.new(:db => 7)
     end
-    
+
     Twilio.connect(ENV["TWILIO_KEY"], ENV["TWILIO_SECRET"])
   end
-  
+
   helpers do
     def logged_in?
       session[:phone].present?
     end
-    
+
     def opentransact_client
       @opentransact_client ||= OpenTransact::Client.new opentransact_site, :consumer_key => ENV["OPENTRANSACT_KEY"], :consumer_secret => ENV["OPENTRANSACT_SECRET"], :token => opentransact_token[:token], :secret => opentransact_token[:secret]
     end
-    
+
     def opentransact_consumer
       @opentransact_consumer ||= OAuth::Consumer.new ENV["OPENTRANSACT_KEY"], ENV["OPENTRANSACT_SECRET"], :site=>opentransact_site
     end
-    
+
     def opentransact_site
       @opentransact_site ||= begin
         uri = URI.parse ENV["OPENTRANSACT_URL"]
         "#{uri.scheme}://#{uri.host}"
       end
     end
-    
+
     def phone
-      @phone ||= session[:phone]|| begin 
+      @phone ||= session[:phone]|| begin
         normalize_phone params[:phone]||params[:From]
       end
     end
-    
+
     def normalize_phone(number)
       number = number.gsub /\+[^\d]/, ''
       if number.size==10
-        "1"+number 
+        "1"+number
       else
         number
       end
     end
-    
+
     def opentransact_token
       @opentransact_token ||= begin
         ts = $redis.get("tokens:#{phone}:#{ENV["OPENTRANSACT_URL"]}")
@@ -67,7 +67,7 @@ class PaySMS < Sinatra::Base
         end
       end
     end
-    
+
     def currency
       @currency ||= begin
         if opentransact_token
@@ -75,7 +75,7 @@ class PaySMS < Sinatra::Base
         end
       end
     end
-    
+
     def url_for(path)
       @site_url ||= begin
         url = request.scheme + "://"
@@ -90,38 +90,38 @@ class PaySMS < Sinatra::Base
       puts "URL: #{@site_url}"
       @site_url+path
     end
-    
+
     def send_sms(text)
       puts "SEND_SMS to:#{phone} message: #{text}"
       Twilio::Sms.message(ENV["TWILIO_NUMBER"], phone, text)
     end
-    
+
     def send_help
       send_sms "PaySMS: To pay someone send 'pay 12 support@picomoney.com', to fetch balance send 'balance'"
     end
-    
+
     def register_phone(msg=nil)
       puts "register_phone: #{phone}"
       @code = ActiveSupport::SecureRandom.hex
       $redis.setex("phone:auth:#{@code}", 1.day.from_now.to_i, @phone)
-      
+
       if msg.present?
         text = "#{msg} http://pays.ms/a/#{@code}"
-      elsif $redis.get("phone:number:#{phone}") 
-        text = "Follow this link to log in to PayS.MS http://pays.ms/a/#{@code}"
+      elsif $redis.get("phone:number:#{phone}")
+        text = "Follow this link to log in to PayS.MS " + url_for("/a/#{@code}")
       else
-        text = "Welcome to PayS.MS. Follow this link to register http://pays.ms/a/#{@code}"
+        text = "Welcome to PayS.MS. Follow this link to register " + url_for("/a/#{@code}")
       end
-      
+
       @message = send_sms(text)
-      
+
     end
   end
 
   get '/' do
     haml :index
   end
-  
+
   post "/register" do
     if phone && phone=~/(\+1)?\d{10}/
       register_phone
@@ -132,7 +132,7 @@ class PaySMS < Sinatra::Base
       haml :index
     end
   end
-  
+
   get '/a/:code' do |code|
     @phone = $redis.get("phone:auth:#{code}")
     if @phone
@@ -141,17 +141,17 @@ class PaySMS < Sinatra::Base
     end
     redirect "/"
   end
-  
+
   post "/logout" do
     session[:phone] = nil
     redirect "/"
   end
-  
+
   post "/twilio/sms" do
     if params[:AccountSid]==ENV["TWILIO_KEY"]
       puts "phone: #{phone}"
       if $redis.get("phone:number:#{phone}")
-        
+
         if currency
           if params[:Body] =~ /(balance|pay +(\d+) +(([^@\s]+)@((?:[-a-z0-9]+\.)+[a-z]{2,}))( +(.*))?)/i
             if $1.downcase == "balance"
@@ -169,31 +169,31 @@ class PaySMS < Sinatra::Base
         else
           register_phone "Please link your PicoMoney account"
         end
-        
+
       else
         register_phone
       end
     end
     "OK"
   end
-  
+
   get "/link" do
     if logged_in?
-      request_token =  opentransact_consumer.get_request_token({:oauth_callback=>url_for("/oauth_callback")}, :scope=>ENV["OPENTRANSACT_URL"]) 
+      request_token =  opentransact_consumer.get_request_token({:oauth_callback=>url_for("/oauth_callback")}, :scope=>ENV["OPENTRANSACT_URL"])
       session[request_token.token]=request_token.secret
       redirect request_token.authorize_url
     else
       redirect "/"
     end
   end
-  
+
   get "/oauth_callback" do
     if logged_in? && session[params[:oauth_token]]
       @request_token = OAuth::RequestToken.new opentransact_consumer, params[:oauth_token], session[params[:oauth_token]]
-    
+
       @access_token = @request_token.get_access_token :oauth_verifier=>params[:oauth_verifier]
       session[params[:oauth_token]]=nil
-      $redis.set("tokens:#{session[:phone]}:#{ENV["OPENTRANSACT_URL"]}",[ @access_token.token, @access_token.secret].join("&"))  
+      $redis.set("tokens:#{session[:phone]}:#{ENV["OPENTRANSACT_URL"]}",[ @access_token.token, @access_token.secret].join("&"))
       send_help
     end
     redirect "/"
